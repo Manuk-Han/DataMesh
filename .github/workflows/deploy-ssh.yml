@@ -10,23 +10,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1) 마이그레이션 디렉토리만 서버로 복사 (패스워드 인증)
-      - name: Sync migrations to server
+      # (선택) 로컬 경로에 파일 있는지 확인용 디버그
+      - name: Debug paths
+        run: |
+          ls -al module/registry/schema-registry/src/main/resources/db/migration || true
+          ls -al module/domain/app/src/main/resources/db/migration || true
+
+      # 서버에 대상 디렉토리 미리 생성 (권한 포함)
+      - name: Prepare dirs on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            sudo mkdir -p /opt/data_mesh/registry/db/migration
+            sudo mkdir -p /opt/data_mesh/app/db/migration
+            sudo chown -R $USER:$USER /opt/data_mesh
+
+      # 1) 레지스트리 마이그 복사 (Postgres)
+      - name: Copy registry migrations
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           password: ${{ secrets.SSH_PASSWORD }}
           port: ${{ secrets.SSH_PORT }}
-          source: |
-            module/registry/schema-registry/src/main/resources/db/migration/**
-            module/domain/app/src/main/resources/db/migration/**
-          target: /opt/data_mesh/
+          source: "module/registry/schema-registry/src/main/resources/db/migration/*.sql"
+          target: "/opt/data_mesh/registry/db/migration"
           overwrite: true
-          strip_components: 6
-          # 결과: /opt/data_mesh/db/migration/ 로 모임
 
-      # 2) 서버에서 Flyway 실행 (Registry → App)
+      # 2) 앱 마이그 복사 (MySQL)
+      - name: Copy app migrations
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "module/domain/app/src/main/resources/db/migration/*.sql"
+          target: "/opt/data_mesh/app/db/migration"
+          overwrite: true
+
+      # 3) 원격에서 Flyway 실행 (Registry → App 순서)
       - name: Flyway migrate on server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -36,14 +63,12 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             set -euo pipefail
-            REG_DIR=/opt/data_mesh
-            APP_DIR=/opt/data_mesh
 
             docker pull flyway/flyway:10.22
 
             echo "[Registry/Postgres] migrate"
             docker run --rm \
-              -v "$REG_DIR/db/migration:/flyway/sql:ro" \
+              -v "/opt/data_mesh/registry/db/migration:/flyway/sql:ro" \
               flyway/flyway:10.22 \
               -url="${{ secrets.PG_URL }}" \
               -user="${{ secrets.PG_USER }}" \
@@ -53,7 +78,7 @@ jobs:
 
             echo "[App/MySQL] migrate"
             docker run --rm \
-              -v "$APP_DIR/db/migration:/flyway/sql:ro" \
+              -v "/opt/data_mesh/app/db/migration:/flyway/sql:ro" \
               flyway/flyway:10.22 \
               -url="${{ secrets.MYSQL_URL }}" \
               -user="${{ secrets.MYSQL_USER }}" \
@@ -61,7 +86,7 @@ jobs:
               -baselineOnMigrate=true -outOfOrder=false -connectRetries=30 \
               migrate
 
-      # 3) 서버 내부에서 헬스 체크
+      # 4) 서버 내부에서 헬스 체크
       - name: Smoke (health checks on server)
         uses: appleboy/ssh-action@v1.0.3
         with:
