@@ -25,9 +25,10 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            sudo mkdir -p /opt/data_mesh/registry/db/migration
-            sudo mkdir -p /opt/data_mesh/app/db/migration
-            sudo chown -R $USER:$USER /opt/data_mesh
+            set -euo pipefail
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S mkdir -p /opt/data_mesh/registry/db/migration
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S mkdir -p /opt/data_mesh/app/db/migration
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S chown -R $USER:$USER /opt/data_mesh
 
       # 1) 레지스트리 마이그 복사 (Postgres)
       - name: Copy registry migrations
