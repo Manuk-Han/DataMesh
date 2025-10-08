@@ -10,7 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 0) 서버에 디렉토리 준비(홈 디렉토리 사용: sudo 불필요)
       - name: Prepare dirs on server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -24,7 +23,6 @@ jobs:
             mkdir -p "$BASE/registry/db/migration" "$BASE/app/db/migration"
             echo "BASE=$BASE" > $BASE/.deploy_env
 
-      # 1) 마이그 파일 복사 (레지스트리/Postgres)
       - name: Copy registry migrations
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -36,7 +34,6 @@ jobs:
           target: "/home/${{ secrets.SSH_USER }}/data_mesh_deploy/registry/db/migration"
           overwrite: true
 
-      # 2) 마이그 파일 복사 (앱/MySQL)
       - name: Copy app migrations
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -48,7 +45,6 @@ jobs:
           target: "/home/${{ secrets.SSH_USER }}/data_mesh_deploy/app/db/migration"
           overwrite: true
 
-      # 3) 원격에서 Flyway 실행 (네트워크 자동탐지 + 디버그 + migrate)
       - name: Flyway migrate on server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -61,28 +57,26 @@ jobs:
             source "$HOME/data_mesh_deploy/.deploy_env"
             docker pull flyway/flyway:10.22 >/dev/null
 
-            # --- compose 네트워크 자동탐지 (postgres 컨테이너 기준) ---
             if docker inspect mesh-postgres >/dev/null 2>&1; then
               NET=$(docker inspect mesh-postgres --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}')
             else
-              echo "❌ 'mesh-postgres' 컨테이너를 찾을 수 없습니다. compose가 떠있는지 확인."
+              echo "'mesh-postgres' container not found."
               docker ps --format 'table {{.Names}}\t{{.Networks}}'
               exit 1
             fi
             if [ -z "$NET" ]; then
-              echo "❌ compose network not found."
+              echo "compose network not found."
               docker ps --format 'table {{.Names}}\t{{.Networks}}'
               exit 1
             fi
-            echo "✅ using network: $NET"
+            echo "using network: $NET"
 
-            echo "🔎 DNS/PORT check"
+            echo "DNS/PORT check"
             docker run --rm --network "$NET" busybox sh -c "getent hosts mesh-postgres || true"
             docker run --rm --network "$NET" busybox sh -c "getent hosts mysql || true"
             docker run --rm --network "$NET" busybox sh -c "nc -zv mesh-postgres 5432 || true"
             docker run --rm --network "$NET" busybox sh -c "nc -zv mysql 3306 || true"
 
-            # (선택) 실제 접속 확인
             docker run --rm --network "$NET" -e PGPASSWORD='${{ secrets.PG_PASSWORD }}' postgres:16 \
               psql -h mesh-postgres -U ${{ secrets.PG_USER }} -d "${{ secrets.PG_DB }}" -c '\conninfo' || true
 
@@ -104,7 +98,6 @@ jobs:
               -password="${{ secrets.MYSQL_PASSWORD }}" \
               -baselineOnMigrate=true -outOfOrder=false -connectRetries=30 migrate
 
-      # 4) 헬스 체크 (서버 내부 주소에 붙게)
       - name: Smoke (health checks on server)
         uses: appleboy/ssh-action@v1.0.3
         with:
