@@ -1,0 +1,76 @@
+name: deploy-ssh
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1) 마이그레이션 디렉토리만 서버로 복사 (패스워드 인증)
+      - name: Sync migrations to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: ${{ secrets.SSH_PORT }}
+          source: |
+            module/registry/schema-registry/src/main/resources/db/migration/**
+            module/domain/app/src/main/resources/db/migration/**
+          target: /opt/data_mesh/
+          overwrite: true
+          strip_components: 6
+          # 결과: /opt/data_mesh/db/migration/ 로 모임
+
+      # 2) 서버에서 Flyway 실행 (Registry → App)
+      - name: Flyway migrate on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -euo pipefail
+            REG_DIR=/opt/data_mesh
+            APP_DIR=/opt/data_mesh
+
+            docker pull flyway/flyway:10.22
+
+            echo "[Registry/Postgres] migrate"
+            docker run --rm \
+              -v "$REG_DIR/db/migration:/flyway/sql:ro" \
+              flyway/flyway:10.22 \
+              -url="${{ secrets.PG_URL }}" \
+              -user="${{ secrets.PG_USER }}" \
+              -password="${{ secrets.PG_PASSWORD }}" \
+              -baselineOnMigrate=true -outOfOrder=false -connectRetries=30 \
+              migrate
+
+            echo "[App/MySQL] migrate"
+            docker run --rm \
+              -v "$APP_DIR/db/migration:/flyway/sql:ro" \
+              flyway/flyway:10.22 \
+              -url="${{ secrets.MYSQL_URL }}" \
+              -user="${{ secrets.MYSQL_USER }}" \
+              -password="${{ secrets.MYSQL_PASSWORD }}" \
+              -baselineOnMigrate=true -outOfOrder=false -connectRetries=30 \
+              migrate
+
+      # 3) 서버 내부에서 헬스 체크
+      - name: Smoke (health checks on server)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -euo pipefail
+            curl -sf "${{ secrets.APP_HEALTH }}" | jq -r .status | grep -q UP
+            curl -sf "${{ secrets.REG_HEALTH }}" | jq -r .status | grep -q UP
+            echo "All health checks passed."
