@@ -2,6 +2,8 @@ name: deploy-ssh
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'module/**/src/main/resources/db/migration/*.sql'
   workflow_dispatch: {}
 
 jobs:
