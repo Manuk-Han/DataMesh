@@ -64,6 +64,7 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             set -euo pipefail
+            NET=docker_default
 
             docker pull flyway/flyway:10.22
 
