@@ -3,7 +3,10 @@ package module.domain.app.usecase;
 import lombok.RequiredArgsConstructor;
 import module.contract.catalog.dto.ProductRequest;
 import module.contract.catalog.dto.ProductResponse;
+import module.contract.catalog.dto.SchemaDto;
 import module.contract.common.dto.PageResponse;
+import module.domain.app.feign.CatalogFeign;
+import module.domain.app.validator.JsonPayloadValidator;
 import module.domain.core.port.out.ObjectStoragePort;
 import module.domain.core.port.out.ProductRepositoryPort;
 import module.domain.core.domain.Product;
@@ -25,6 +28,9 @@ public class ProductCommandService {
     private final ObjectStoragePort storage;
 
     private final S3Props props;
+
+    private final CatalogFeign catalogFeign;
+    private final JsonPayloadValidator validator;
 
     @Transactional(readOnly = true)
     public Map<String, String> issueDownloadUrl(Long productId, Duration ttl) {
@@ -51,6 +57,12 @@ public class ProductCommandService {
 
     @Transactional
     public ProductResponse create(ProductRequest req) {
+        SchemaDto schema = catalogFeign.getSchema("catalog-product-v1");
+
+        if ("JSONSCHEMA".equalsIgnoreCase(schema.getFormat())) {
+            validator.validate(schema.getContent(), req);
+        }
+
         Product product = Product.builder()
                 .name(req.name())
                 .description(req.description())
