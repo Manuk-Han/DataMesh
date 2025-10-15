@@ -30,6 +30,7 @@ public class ProductCommandService {
     private final S3Props props;
 
     private final CatalogFeign catalogFeign;
+
     private final JsonPayloadValidator validator;
 
     @Transactional(readOnly = true)
